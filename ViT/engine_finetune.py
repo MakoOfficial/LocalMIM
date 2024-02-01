@@ -35,22 +35,25 @@ def train_one_epoch(model, criterion, data_loader, optimizer, device, epoch, los
 
     if log_writer is not None:
         print('log_dir: {}'.format(log_writer.log_dir))
-
-    for data_iter_step, (samples, targets) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
+    MAELoss = 0.
+    total_size = 0.
+    for data_iter_step, (data, targets) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
 
         # we use a per iteration (instead of per epoch) lr scheduler
         if data_iter_step % accum_iter == 0:
             lr_sched.adjust_learning_rate(optimizer, data_iter_step / len(data_loader) + epoch, args)
-
+        samples, gender = data
         samples = samples.to(device, non_blocking=True)
-        targets = targets.to(device, non_blocking=True)
-
+        gender = gender.to(device, non_blocking=True)
+        targets = targets.type(torch.LongTensor).to(device, non_blocking=True)
         if mixup_fn is not None:
             samples, targets = mixup_fn(samples, targets)
 
+        pred = None
         with torch.cuda.amp.autocast():
-            outputs = model(samples)
+            outputs = model(samples, gender)
             loss = criterion(outputs, targets)
+            pred = torch.argmax(outputs.detach(), dim=1)
 
         loss_value = loss.item()
 
@@ -64,7 +67,8 @@ def train_one_epoch(model, criterion, data_loader, optimizer, device, epoch, los
                     update_grad=(data_iter_step + 1) % accum_iter == 0)
         if (data_iter_step + 1) % accum_iter == 0:
             optimizer.zero_grad()
-
+        MAELoss += torch.nn.functional.l1_loss(pred.detach(), targets.detach(), reduction='sum')
+        total_size += pred.shape[0]
         torch.cuda.synchronize()
 
         metric_logger.update(loss=loss_value)
@@ -88,12 +92,14 @@ def train_one_epoch(model, criterion, data_loader, optimizer, device, epoch, los
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
+    print(f"epoch{epoch} MAE: {round(MAELoss, 2)}")
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
 
 @torch.no_grad()
 def evaluate(data_loader, model, device):
-    criterion = torch.nn.CrossEntropyLoss()
+    # criterion = torch.nn.CrossEntropyLoss()
+    criterion = torch.nn.L1Loss()
 
     metric_logger = misc.MetricLogger(delimiter="  ")
     header = 'Test:'
@@ -102,24 +108,30 @@ def evaluate(data_loader, model, device):
     model.eval()
 
     for batch in metric_logger.log_every(data_loader, 30, header):
-        images = batch[0]
+        images, gender = batch[0]
         target = batch[-1]
         images = images.to(device, non_blocking=True)
+        gender = gender.to(device, non_blocking=True)
         target = target.to(device, non_blocking=True)
+        # print(f"targets shape:{target.shape}")
 
         # compute output
         with torch.cuda.amp.autocast():
-            output = model(images)
+            output = model(images, gender)
+            output = torch.argmax(output, dim=1)
+            print(f"eval output:{output}")
+            print(f"eval label:{target}")
             loss = criterion(output, target)
 
-        acc1, acc5 = accuracy(output, target, topk=(1, 5))
 
-        batch_size = images.shape[0]
+        # acc1, acc5 = accuracy(output, target, topk=(1, 5))
+
+        # batch_size = images.shape[0]
         metric_logger.update(loss=loss.item())
-        metric_logger.meters['acc1'].update(acc1.item(), n=batch_size)
-        metric_logger.meters['acc5'].update(acc5.item(), n=batch_size)
+        # metric_logger.meters['acc1'].update(acc1.item(), n=batch_size)
+        # metric_logger.meters['acc5'].update(acc5.item(), n=batch_size)
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
-    print('* Acc@1 {top1.global_avg:.3f} Acc@5 {top5.global_avg:.3f} loss {losses.global_avg:.3f}'.format(top1=metric_logger.acc1, top5=metric_logger.acc5, losses=metric_logger.loss))
+    print('loss {losses.global_avg:.3f}'.format(losses=metric_logger.loss))
 
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}

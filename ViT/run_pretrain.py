@@ -31,18 +31,21 @@ from util.misc import NativeScalerWithGradNormCount as NativeScaler
 import models_mim
 from engine_pretrain import train_one_epoch
 import warnings
+
 warnings.filterwarnings("ignore", category=UserWarning)
 
 
 def get_args():
     parser = argparse.ArgumentParser('MAE pre-training', add_help=False)
-    parser.add_argument('--batch_size', default=128, type=int, help='Batch size per GPU (effective batch size is batch_size*accum_iter*ngpus')
+    parser.add_argument('--batch_size', default=128, type=int,
+                        help='Batch size per GPU (effective batch size is batch_size*accum_iter*ngpus')
     parser.add_argument('--epochs', default=400, type=int)
-    parser.add_argument('--accum_iter', default=2, type=int, help='Accumulate gradient iterations (for increasing the effective batch size under memory constraints)')
+    parser.add_argument('--accum_iter', default=2, type=int,
+                        help='Accumulate gradient iterations (for increasing the effective batch size under memory constraints)')
 
     # Model parameters
     parser.add_argument('--model', default='mae_vit_large_patch16', type=str, help='Name of model to train')
-    parser.add_argument('--input_size', default=512, type=int, help='images input size')
+    parser.add_argument('--input_size', default=224, type=int, help='images input size')
     parser.add_argument('--mask_ratio', default=0.50, type=float, help='Masking ratio (percentage of removed patches).')
     parser.add_argument('--hog_nbins', default=9, type=int, help='nbins for HOG feature')
     parser.add_argument('--hog_bias', action='store_true', help='hog bias')
@@ -66,7 +69,8 @@ def get_args():
     parser.set_defaults(auto_resume=True)
     parser.add_argument('--start_epoch', default=0, type=int, help='start epoch')
     parser.add_argument('--num_workers', default=12, type=int)
-    parser.add_argument('--pin_mem', action='store_true', help='Pin CPU memory in DataLoader for more efficient transfer to GPU.')
+    parser.add_argument('--pin_mem', action='store_true',
+                        help='Pin CPU memory in DataLoader for more efficient transfer to GPU.')
     parser.add_argument('--no_pin_mem', action='store_false', dest='pin_mem')
     parser.set_defaults(pin_mem=True)
 
@@ -93,15 +97,17 @@ def main(args):
 
     # simple augmentation
     transform_train = transforms.Compose([
-            transforms.RandomResizedCrop(args.input_size, scale=(0.2, 1.0), interpolation=transforms.InterpolationMode.BICUBIC),  # 3 is bicubic
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
+        transforms.RandomResizedCrop(args.input_size, scale=(0.2, 1.0),
+                                     interpolation=transforms.InterpolationMode.BICUBIC),  # 3 is bicubic
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])])
     dataset_train = datasets.ImageFolder(os.path.join(args.data_path, 'train'), transform=transform_train)
     print(dataset_train)
     num_tasks = misc.get_world_size()
     global_rank = misc.get_rank()
-    sampler_train = torch.utils.data.DistributedSampler(dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True)
+    sampler_train = torch.utils.data.DistributedSampler(dataset_train, num_replicas=num_tasks, rank=global_rank,
+                                                        shuffle=True)
     print("Sampler_train = %s" % str(sampler_train))
     data_loader_train = torch.utils.data.DataLoader(
         dataset_train,
@@ -119,29 +125,29 @@ def main(args):
 
     # define the model
     model = models_mim.__dict__[args.model](hog_nbins=args.hog_nbins, hog_bias=args.hog_bias)
-    # 加入预训练参数
-    if args.finetune:
-        checkpoint = torch.load(args.finetune, map_location='cpu')
-        print("Load pre-trained checkpoint from: %s" % args.finetune)
-        checkpoint_model = checkpoint['model']
-        state_dict = model.state_dict()
-        for k in ['head.weight', 'head.bias']:
-            if k in checkpoint_model and checkpoint_model[k].shape != state_dict[k].shape:
-                print(f"Removing key {k} from pretrained checkpoint")
-                del checkpoint_model[k]
 
-        # load pre-trained model
-        msg = model.load_state_dict(checkpoint_model, strict=True)
-        print(msg)
+    #     # 加入预训练参数
+    checkpoint = torch.load('./vit_base_localmim_hog_1600ep_pretrain.pth', map_location='cpu')
+    print("Load pre-trained checkpoint")
+    checkpoint_model = checkpoint['model']
+    state_dict = model.state_dict()
+    for k in ['head.weight', 'head.bias']:
+        if k in checkpoint_model and checkpoint_model[k].shape != state_dict[k].shape:
+            print(f"Removing key {k} from pretrained checkpoint")
+            del checkpoint_model[k]
+
+    # load pre-trained model
+    msg = model.load_state_dict(checkpoint_model, strict=True)
+    print(msg)
 
     model.to(device)
     model_without_ddp = model
     # print("Model = %s" % str(model_without_ddp))
 
-    eff_batch_size = args.batch_size*args.accum_iter*misc.get_world_size()
+    eff_batch_size = args.batch_size * args.accum_iter * misc.get_world_size()
     if args.lr is None:  # only base_lr is specified
-        args.lr = args.blr*eff_batch_size/256
-    print("base lr: %.2e" % (args.lr*256/eff_batch_size))
+        args.lr = args.blr * eff_batch_size / 256
+    print("base lr: %.2e" % (args.lr * 256 / eff_batch_size))
     print("actual lr: %.2e" % args.lr)
     print("accumulate grad iterations: %d" % args.accum_iter)
     print("effective batch size: %d" % eff_batch_size)
@@ -149,7 +155,7 @@ def main(args):
     if args.distributed:
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
         model_without_ddp = model.module
-    
+
     # following timm
     param_groups = optim_factory.add_weight_decay(model_without_ddp, args.weight_decay)
     optimizer = torch.optim.AdamW(param_groups, lr=args.lr, betas=(0.9, 0.95))
@@ -163,9 +169,11 @@ def main(args):
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             data_loader_train.sampler.set_epoch(epoch)
-        train_stats = train_one_epoch(model, data_loader_train, optimizer, device, epoch, loss_scaler, log_writer=log_writer, args=args)
-        if args.output_dir and (epoch%50 == 0 or epoch+1 == args.epochs):
-            misc.save_model(args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer, loss_scaler=loss_scaler, epoch=epoch)
+        train_stats = train_one_epoch(model, data_loader_train, optimizer, device, epoch, loss_scaler,
+                                      log_writer=log_writer, args=args)
+        if args.output_dir and (epoch % 50 == 0 or epoch + 1 == args.epochs):
+            misc.save_model(args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
+                            loss_scaler=loss_scaler, epoch=epoch)
 
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()}, 'epoch': epoch}
 
