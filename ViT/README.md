@@ -42,6 +42,7 @@ OMP_NUM_THREADS=1 python -m torch.distributed.launch --nproc_per_node=8 run_pret
 ```bash
 OMP_NUM_THREADS=1 python -m torch.distributed.run --nproc_per_node=1 run_finetune.py --batch_size 128 --model vit_base_patch16 --finetune /ViT/checkpoint-100.pth --epochs 100 --warmup_epochs 20 --lr 2e-3 --min_lr 1e-5 --layer_decay 0.65 --weight_decay 0.05 --drop_path 0.1 --reprob 0.25 --mixup 0.8 --cutmix 1.0 --dist_eval --data_path ../code/archive/masked_1K_fold/fold_1 --output_dir ./LocalMIMFineTune
 python ViT/myFinetune.py --batch_size 8 --model vit_base_patch16 --finetune ViT/checkpoint-100.pth --epochs 100 --warmup_epochs 20 --lr 2e-3 --min_lr 1e-5 --layer_decay 0.65 --weight_decay 0.05 --drop_path 0.1 --reprob 0.25 --data_path ../archive/masked_1K_fold/fold_1 --output_dir ./LocalMIMFineTune
+python ViT/myFinetune.py --batch_size 32 --model vit_base_patch16 --finetune ViT/checkpoint-100.pth --epochs 100 --warmup_epochs 20 --lr 2e-3 --min_lr 1e-5 --layer_decay 0.65 --weight_decay 0.05 --drop_path 0.1 --reprob 0.25 --data_path ../../../autodl-tmp/FirstRotate --output_dir ../../../autodl-tmp/LocalMIMFineTune
 ```
 #### To fine-tune ViT-B:
 ```bash
